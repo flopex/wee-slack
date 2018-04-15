@@ -2448,7 +2448,8 @@ def subprocess_message_changed(message_json, eventrouter, channel, team):
 
     new_message["text"] += unwrap_attachments(message_json, new_message["text"])
     if "edited" in new_message:
-        channel.change_message(new_message["ts"], new_message["text"], ' (edited)')
+        if not config.suppress_edited_messages:
+            channel.change_message(new_message["ts"], new_message["text"], ' (edited)')
     else:
         channel.change_message(new_message["ts"], new_message["text"])
 
@@ -3688,6 +3689,10 @@ class PluginConfig(object):
         'slack_timeout': Setting(
             default='20000',
             desc='How long (ms) to wait when communicating with Slack.'),
+        'suppress_edited_messages': Setting(
+            default='false',
+            desc='Don\'t update messages that have been edited, '
+            'once wee-slack reloads history the messages will display as usual(edited).'),
         'switch_buffer_on_join': Setting(
             default='true',
             desc='When /joining a channel, automatically switch to it as well.'),
