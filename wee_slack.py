@@ -2641,7 +2641,8 @@ def render(message_json, team, channel, force=False):
 #            text += " [Replies: {} Thread ID: {} ] ".format(len(self.threads), self.thread_id)
 #            #for thread in self.threads:
 
-        text += create_reaction_string(message_json.get("reactions", ""))
+        if not config.hide_reactions:
+            text += create_reaction_string(message_json.get("reactions", ""))
         message_json["_rendered_text"] = text
         return text
 
