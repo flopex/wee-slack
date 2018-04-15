@@ -2768,7 +2768,11 @@ def unwrap_attachments(message_json, text_before):
             title_link = attachment.get('title_link', '')
             if title_link in text_before_unescaped:
                 title_link = ''
-            if title and title_link:
+
+            if config.hide_link_text:
+                t.append('%s%s' % (prepend_title_text, title_link,))
+                prepend_title_text = ''
+            elif title and title_link:
                 t.append('%s%s (%s)' % (prepend_title_text, title, title_link,))
                 prepend_title_text = ''
             elif title and not title_link:
@@ -2778,11 +2782,12 @@ def unwrap_attachments(message_json, text_before):
             if from_url not in text_before_unescaped and from_url != title_link:
                 t.append(from_url)
 
-            atext = attachment.get("text", None)
-            if atext:
-                tx = re.sub(r' *\n[\n ]+', '\n', atext)
-                t.append(prepend_title_text + tx)
-                prepend_title_text = ''
+            if not config.hide_link_text:
+                atext = attachment.get("text", None)
+                if atext:
+                    tx = re.sub(r' *\n[\n ]+', '\n', atext)
+                    t.append(prepend_title_text + tx)
+                    prepend_title_text = ''
             fields = attachment.get("fields", None)
             if fields:
                 for f in fields:
