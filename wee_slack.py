@@ -3640,6 +3640,12 @@ class PluginConfig(object):
         'group_name_prefix': Setting(
             default='&',
             desc='The prefix of buffer names for groups (private channels).'),
+        'hide_link_text': Setting(
+            default='false',
+            desc='Hide links\' expanded title,text'),
+        'hide_reactions': Setting(
+            default='false',
+            desc='Hide emoji-reactions on messages'),
         'map_underline_to': Setting(
             default='_',
             desc='When sending underlined text to slack, use this formatting'
