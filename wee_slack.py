@@ -2455,7 +2455,8 @@ def subprocess_message_changed(message_json, eventrouter, channel, team):
 
 
 def subprocess_message_deleted(message_json, eventrouter, channel, team):
-    channel.change_message(message_json["deleted_ts"], "(deleted)", '')
+    if not config.suppress_deleted_messages:
+        channel.change_message(message_json["deleted_ts"], "(deleted)", '')
 
 
 def subprocess_channel_topic(message_json, eventrouter, channel, team):
@@ -3689,6 +3690,10 @@ class PluginConfig(object):
         'slack_timeout': Setting(
             default='20000',
             desc='How long (ms) to wait when communicating with Slack.'),
+        'suppress_deleted_messages': Setting(
+            default='false',
+            desc='Don\'t remove messages that have been deleted, '
+            'once wee-slack reloads history the messages will display as usual(deleted).'),
         'suppress_edited_messages': Setting(
             default='false',
             desc='Don\'t update messages that have been edited, '
