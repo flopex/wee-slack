@@ -223,6 +223,13 @@ Run a Slack slash command. Simply prepend `/slack slash` to what you'd type in t
 /slack slash /desiredcommand arg1 arg2 arg3
 ```
 
+Paste in the input the slack link to some message:
+```
+/slack linkarchive [$]message_id
+```
+This command is intended to be used with the mouse or cursor mode (see
+below section).
+
 To send a command as a normal message instead of performing the action, prefix it with a slash or a space, like so:
 ```
 //slack
@@ -266,6 +273,34 @@ To enable tab completion of emojis, copy or symlink the `weemoji.json` file to y
 ```
 /set weechat.completion.default_template "%(nicks)|%(irc_channels)|%(emoji)"
 ```
+
+#### Cursor and mouse mode
+
+The cursor mode and mouse mode can be used to interact with older messages, for editing, deleting, reacting and replying to a message. Mouse mode can be toggled by pressing `Alt`+`m` and cursor mode can be entered by running `/cursor` (see `/help cursor`).
+
+If mouse mode is enabled, the default behavior when right-clicking on a message is to paste its id in the input. It can be used in `/reply`, `s/` substitution/deletion and in `+:emoji:` commands instead of a message number.
+It can also be used as an argument to the `/slack linkarchive` command.
+
+In cursor mode, the `M` key achieves the same result (memo: the default for weechat is to paste the message with `m`, `M` simply copies the id).
+In addition, `R` will prepare a `/reply id` and `D` will delete the message (provided it’s yours).
+`T` will open the thread associated to a message, equivalent to `/thread id`
+`L` will call the `/slack linkarchive` command behind the hood and paste it to the current input.
+
+Please see weechat’s documentation about [how to use the cursor mode](https://weechat.org/files/doc/stable/weechat_user.en.html#key_bindings_cursor_context) or [adapt the bindings](https://weechat.org/files/doc/stable/weechat_user.en.html#command_weechat_key) to your preference.
+
+Default key bindings:
+```
+/key bindctxt mouse @chat(python.*):button2 hsignal:slack_mouse
+/key bindctxt cursor @chat(python.*):D hsignal:slack_cursor_delete
+/key bindctxt cursor @chat(python.*):L hsignal:slack_cursor_linkarchive
+/key bindctxt cursor @chat(python.*):M hsignal:slack_cursor_message
+/key bindctxt cursor @chat(python.*):R hsignal:slack_cursor_reply
+/key bindctxt cursor @chat(python.*):T hsignal:slack_cursor_thread
+```
+
+Note that if these keys are already defined, they will not be overwritten by wee-slack. In that case, you will have to define your own key bindings by running the above commands modified to your liking.
+
+hsignals `slack_mouse` and `slack_cursor_message` currently have the same meaning but may be subject to evolutions.
 
 Removing a team
 ---------------
