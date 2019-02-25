@@ -4,7 +4,7 @@ from __future__ import unicode_literals
 
 from collections import OrderedDict
 from functools import wraps
-from itertools import islice
+from itertools import islice, count
 
 import textwrap
 import time
@@ -240,6 +240,16 @@ class ProxyWrapper(object):
 
 ##### Helpers
 
+
+def format_exc_tb():
+    return decode_from_utf8(traceback.format_exc())
+
+
+def format_exc_only():
+    etype, value, _ = sys.exc_info()
+    return ''.join(decode_from_utf8(traceback.format_exception_only(etype, value)))
+
+
 def get_nick_color_name(nick):
     info_name_prefix = "irc_" if int(weechat_version) < 0x1050000 else ""
     return w.info_get(info_name_prefix + "nick_color_name", nick)
@@ -369,34 +379,34 @@ class EventRouter(object):
 
     def receive_ws_callback(self, team_hash):
         """
-        incomplete (reconnect)
         This is called by the global method of the same name.
         It is triggered when we have incoming data on a websocket,
         which needs to be read. Once it is read, we will ensure
         the data is valid JSON, add metadata, and place it back
         on the queue for processing as JSON.
         """
+        team = self.teams[team_hash]
         try:
             # Read the data from the websocket associated with this team.
-            data = decode_from_utf8(self.teams[team_hash].ws.recv())
-            message_json = json.loads(data)
-            metadata = WeeSlackMetadata({
-                "team": team_hash,
-            }).jsonify()
-            message_json["wee_slack_metadata"] = metadata
-            if self.recording:
-                self.record_event(message_json, 'type', 'websocket')
-            self.receive_json(json.dumps(message_json))
+            data = team.ws.recv()
         except WebSocketConnectionClosedException:
-            # TODO: handle reconnect here
-            self.teams[team_hash].set_disconnected()
+            w.prnt(team.channel_buffer,
+                    'Lost connection to slack team {} (on receive), reconnecting.'.format(team.domain))
+            dbg('receive_ws_callback failed with exception:\n{}'.format(format_exc_tb()), level=5)
+            team.set_disconnected()
             return w.WEECHAT_RC_OK
         except ssl.SSLWantReadError:
             # Expected to happen occasionally on SSL websockets.
             return w.WEECHAT_RC_OK
-        except Exception:
-            dbg("socket issue: {}\n".format(traceback.format_exc()))
-            return w.WEECHAT_RC_OK
+
+        message_json = json.loads(decode_from_utf8(data))
+        metadata = WeeSlackMetadata({
+            "team": team_hash,
+        }).jsonify()
+        message_json["wee_slack_metadata"] = metadata
+        if self.recording:
+            self.record_event(message_json, 'type', 'websocket')
+        self.receive_json(json.dumps(message_json))
 
     def receive_httprequest_callback(self, data, command, return_code, out, err):
         """
@@ -442,6 +452,13 @@ class EventRouter(object):
         elif return_code != -1:
             self.reply_buffer.pop(request_metadata.response_id, None)
             self.delete_context(data)
+            if request_metadata.request == 'rtm.start':
+                w.prnt('', ('Failed connecting to slack team with token starting with {}, ' +
+                        'retrying. If this persists, try increasing slack_timeout.')
+                        .format(request_metadata.token[:15]))
+                dbg('rtm.start failed with return_code {}. stack:\n{}'
+                        .format(return_code, ''.join(traceback.format_stack())), level=5)
+                self.receive(request_metadata)
         else:
             if request_metadata.response_id not in self.reply_buffer:
                 self.reply_buffer[request_metadata.response_id] = StringIO()
@@ -828,7 +845,7 @@ def typing_update_cb(data, remaining_calls):
 def slack_never_away_cb(data, remaining_calls):
     if config.never_away:
         for t in EVENTROUTER.teams.values():
-            slackbot = t.get_channel_map()['slackbot']
+            slackbot = t.get_channel_map()['Slackbot']
             channel = t.channels[slackbot]
             request = {"type": "typing", "channel": channel.identifier}
             channel.team.send_to_websocket(request, expect_reply=False)
@@ -1181,8 +1198,10 @@ class SlackTeam(object):
                     # self.attach_websocket(ws)
                     self.set_connected()
                     self.connecting = False
-                except Exception as e:
-                    dbg("websocket connection error: {}".format(decode_from_utf8(e)))
+                except:
+                    w.prnt(self.channel_buffer,
+                            'Failed connecting to slack team {}, retrying.'.format(self.domain))
+                    dbg('connect failed with exception:\n{}'.format(format_exc_tb()), level=5)
                     self.connecting = False
                     return False
             else:
@@ -1218,9 +1237,11 @@ class SlackTeam(object):
             self.ws.send(encode_to_utf8(message))
             dbg("Sent {}...".format(message[:100]))
         except:
-            print "WS ERROR"
-            dbg("Unexpected error: {}\nSent: {}".format(sys.exc_info()[0], data))
-            self.set_connected()
+            w.prnt(self.channel_buffer,
+                    'Lost connection to slack team {} (on send), reconnecting.'.format(self.domain))
+            dbg('send_to_websocket failed with data: `{}` and exception:\n{}'
+                    .format(message, format_exc_tb()), level=5)
+            self.set_disconnected()
 
     def update_member_presence(self, user, presence):
         user.presence = presence
@@ -1753,8 +1774,8 @@ class SlackChannel(SlackChannelCommon):
                         elif self.team.is_user_present(user.identifier):
                             nick_group = here
                         w.nicklist_add_nick(self.channel_buffer, nick_group, user.name, user.color_name, "", "", 1)
-                except Exception as e:
-                    dbg("DEBUG: {} {} {}".format(self.identifier, self.name, decode_from_utf8(e)))
+                except:
+                    dbg("DEBUG: {} {} {}".format(self.identifier, self.name, format_exc_only()))
             else:
                 w.nicklist_remove_all(self.channel_buffer)
                 for fn in ["1| too", "2| many", "3| users", "4| to", "5| show"]:
@@ -2415,14 +2436,8 @@ def handle_rtmstart(login_data, eventrouter):
         t.set_reconnect_url(login_data['url'])
         t.connect()
 
-    t.buffer_prnt('Connected to Slack')
-    t.buffer_prnt('{:<20} {}'.format("Websocket URL", login_data["url"]))
-    t.buffer_prnt('{:<20} {}'.format("User name", login_data["self"]["name"]))
-    t.buffer_prnt('{:<20} {}'.format("User ID", login_data["self"]["id"]))
-    t.buffer_prnt('{:<20} {}'.format("Team name", login_data["team"]["name"]))
-    t.buffer_prnt('{:<20} {}'.format("Team domain", login_data["team"]["domain"]))
-    t.buffer_prnt('{:<20} {}'.format("Team id", login_data["team"]["id"]))
-
+    t.buffer_prnt('Connected to Slack team {} ({}) with username {}'.format(
+        login_data["team"]["name"], t.domain, t.nick))
     dbg("connected to {}".format(t.domain))
 
 
@@ -2490,7 +2505,9 @@ def handle_history(message_json, eventrouter, **kwargs):
         kwargs['channel'].clear_messages()
     kwargs['channel'].got_history = True
     for message in reversed(message_json["messages"]):
-        process_message(message, eventrouter, **kwargs)
+        # Don't download historical files, considering that
+        # background_load_all_history might be on.
+        process_message(message, eventrouter, download=False, **kwargs)
 
 
 def handle_conversationsmembers(members_json, eventrouter, **kwargs):
@@ -2583,7 +2600,7 @@ def process_pong(message_json, eventrouter, **kwargs):
     pass
 
 
-def process_message(message_json, eventrouter, store=True, **kwargs):
+def process_message(message_json, eventrouter, store=True, download=True, **kwargs):
     channel = kwargs["channel"]
     team = kwargs["team"]
 
@@ -2616,6 +2633,46 @@ def process_message(message_json, eventrouter, store=True, **kwargs):
         if store:
             channel.store_message(message, team)
         dbg("NORMAL REPLY {}".format(message_json))
+
+    if download:
+        download_files(message_json, **kwargs)
+
+
+def download_files(message_json, **kwargs):
+    team = kwargs["team"]
+    download_location = config.files_download_location
+    if not download_location:
+        return
+    if not os.path.exists(download_location):
+        try:
+            os.makedirs(download_location)
+        except:
+            w.prnt('', 'ERROR: Failed to create directory at files_download_location: {}'
+                    .format(format_exc_only()))
+
+    def fileout_iter(path):
+        yield path
+        main, ext = os.path.splitext(path)
+        for i in count(start=1):
+            yield main + "-{}".format(i) + ext
+
+    for f in message_json.get('files', []):
+        if f.get('mode') == 'tombstone':
+            continue
+
+        filetype = '' if f['title'].endswith(f['filetype']) else '.' + f['filetype']
+        filename = '{}_{}{}'.format(team.preferred_name, f['title'], filetype)
+        for fileout in fileout_iter(os.path.join(download_location, filename)):
+            if os.path.isfile(fileout):
+                continue
+            weechat.hook_process_hashtable(
+                "url:" + f['url_private'],
+                {
+                    'file_out': fileout,
+                    'httpheader': 'Authorization: Bearer ' + team.token
+                },
+                config.slack_timeout, "", "")
+            break
 
 
 def subprocess_thread_message(message_json, eventrouter, channel, team):
@@ -3526,18 +3583,26 @@ def get_msg_from_id(channel, msg_id):
 @utf8_decode
 def command_thread(data, current_buffer, args):
     """
-    /thread <message_id>
+    /thread [message_id]
     Open the thread for the message.
+    If no message id is specified the last thread in channel will be opened.
     """
     channel = EVENTROUTER.weechat_controller.buffers[current_buffer]
-    if not args:
-        w.prnt('', 'Usage: /thread <id>')
-        return w.WEECHAT_RC_OK_EAT
 
-    msg = get_msg_from_id(channel, args)
-    if not msg:
-        w.prnt('', 'ERROR: Invalid id given, must be an existing id')
-        return w.WEECHAT_RC_OK_EAT
+    if args:
+        msg = get_msg_from_id(channel, args)
+        if not msg:
+            w.prnt('', 'ERROR: Invalid id given, must be an existing id')
+            return w.WEECHAT_RC_OK_EAT
+    else:
+        for message in reversed(channel.messages.values()):
+            if type(message) == SlackMessage and len(message.submessages) > 0:
+                msg = message
+                break
+        else:
+            w.prnt('', 'ERROR: No threads found in channel')
+            return w.WEECHAT_RC_OK_EAT
+
     msg.open_thread(switch=config.switch_buffer_on_join)
     return w.WEECHAT_RC_OK_EAT
 
@@ -3711,7 +3776,7 @@ def command_linkarchive(data, current_buffer, args):
                 message_id = args
             message = channel.hashed_messages.get(message_id)
             if message:
-                url += '{}{:0>6}'.format(message.ts.majorstr(), message.ts.minorstr())
+                url += 'p{}{:0>6}'.format(message.ts.majorstr(), message.ts.minorstr())
                 if isinstance(message, SlackThreadMessage):
                     url += "?thread_ts={}&cid={}".format(message.parent_message.ts, channel.identifier)
             else:
@@ -3914,8 +3979,8 @@ def load_emoji():
         DIR = w.info_get("weechat_dir", "")
         with open('{}/weemoji.json'.format(DIR), 'r') as ef:
             return json.loads(ef.read())["emoji"]
-    except Exception as e:
-        dbg("Couldn't load emoji list: {}".format(e), 5)
+    except:
+        dbg("Couldn't load emoji list: {}".format(format_exc_only()), 5)
     return []
 
 
@@ -4072,6 +4137,10 @@ class PluginConfig(object):
         'external_user_suffix': Setting(
             default='*',
             desc='The suffix appended to nicks to indicate external users.'),
+        'files_download_location': Setting(
+            default='',
+            desc='If set, file attachments will be automatically downloaded'
+            ' to this location.'),
         'group_name_prefix': Setting(
             default='&',
             desc='The prefix of buffer names for groups (private channels).'),
@@ -4234,6 +4303,7 @@ class PluginConfig(object):
     get_color_thread_suffix = get_string
     get_debug_level = get_int
     get_external_user_suffix = get_string
+    get_files_download_location = get_string
     get_group_name_prefix = get_string
     get_map_underline_to = get_string
     get_muted_channels_activity = get_string
@@ -4355,6 +4425,8 @@ if __name__ == "__main__":
             # attach to the weechat hooks we need
 
             tokens = map(string.strip, config.slack_api_token.split(','))
+            w.prnt('', 'Connecting to {} slack team{}.'
+                    .format(len(tokens), '' if len(tokens) == 1 else 's'))
             for t in tokens:
                 s = initiate_connection(t)
                 EVENTROUTER.receive(s)
