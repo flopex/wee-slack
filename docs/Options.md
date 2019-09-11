@@ -92,7 +92,7 @@ slack` after changing it to take effect.
 
 **Default:** ``
 
-**Description:** If set, file attachments will be automatically downloaded to this location.
+**Description:** If set, file attachments will be automatically downloaded to this location. "%h" will be replaced by WeeChat home, "~/.weechat" by default.
 
 ### group_name_prefix
 
@@ -122,7 +122,7 @@ slack` after changing it to take effect.
 
 **Default:** `false`
 
-**Description:** Control if you want to see notification when a usergroup's handle has changed, either true or false
+**Description:** Control if you want to see notification when a usergroup's handle has changed, either true or false.
 
 ### record_events
 
